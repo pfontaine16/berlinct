@@ -23,6 +23,7 @@ Then open http://localhost:8765 (on Windows, double-click `Fly Over Berlin.bat`)
 | `T` | Guided tour |
 | `P` | Places menu |
 | `L` | Time of day |
+| `F` | Summer / autumn |
 | `N` | Place names on/off |
 | `B` | Town line on/off |
 

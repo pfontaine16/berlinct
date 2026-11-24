@@ -73,6 +73,23 @@ const tileIndex = (() => { const a = []; for (let j = 0; j < NV - 1; j++) for (l
 const terrain = new THREE.Group(); scene.add(terrain);
 let LODF = 1.3, frame = 0, pendingLoads = 0;
 
+// Autumn tint for the aerial photo: dark green (tree canopy) turns to fall colour, lawns go a little straw-yellow.
+const seasonRef = { value: 0 };
+function autumnGround(sh) {
+  sh.uniforms.uAutumn = seasonRef;
+  sh.vertexShader = sh.vertexShader.replace('#include <common>', '#include <common>\nvarying vec2 vGw;').replace('#include <begin_vertex>', '#include <begin_vertex>\nvGw = (modelMatrix * vec4(position, 1.0)).xz;');
+  sh.fragmentShader = sh.fragmentShader.replace('#include <common>', '#include <common>\nvarying vec2 vGw; uniform float uAutumn;').replace('#include <map_fragment>', `#include <map_fragment>
+if (uAutumn > 0.0) {
+  vec3 gc = diffuseColor.rgb; float gl = dot(gc, vec3(0.3, 0.59, 0.11));
+  float green = smoothstep(0.02, 0.2, (gc.g - max(gc.r, gc.b)) / max(gl, 0.01));
+  float canopy = green * (1.0 - smoothstep(0.075, 0.15, gl));
+  float gn = 0.5 + 0.5 * sin(vGw.x * 0.13 + sin(vGw.y * 0.09) * 2.0) * sin(vGw.y * 0.11 + sin(vGw.x * 0.07) * 2.0);
+  vec3 fall = mix(vec3(0.52, 0.11, 0.03), vec3(0.72, 0.42, 0.06), gn);
+  gc = mix(gc, fall * (0.3 + 6.0 * gl), uAutumn * canopy * 0.92);
+  gc = mix(gc, gc * vec3(1.18, 1.0, 0.72), uAutumn * green * (1.0 - canopy) * 0.7);
+  diffuseColor.rgb = gc;
+}`);
+}
 class Tile {
   constructor(z, x, y) {
     this.z = z; this.x = x; this.y = y; this.key = x + '_' + y;
@@ -108,7 +125,8 @@ class Tile {
       if (this.state !== 1) { bmp.close(); g.dispose(); return; }
       const tex = new THREE.Texture(bmp); tex.flipY = false; tex.colorSpace = THREE.SRGBColorSpace; tex.anisotropy = MAXANISO;
       tex.wrapS = tex.wrapT = THREE.ClampToEdgeWrapping; tex.needsUpdate = true;
-      const m = new THREE.Mesh(g, new THREE.MeshLambertMaterial({ map: tex, toneMapped: false }));
+      const mt = new THREE.MeshLambertMaterial({ map: tex, toneMapped: false }); mt.onBeforeCompile = autumnGround; mt.customProgramCacheKey = () => 'ground';
+      const m = new THREE.Mesh(g, mt);
       m.position.set(this.x0, 0, this.z0); m.visible = false; m.matrixAutoUpdate = false; m.updateMatrix();
       terrain.add(m); this.mesh = m; this.state = 2;
     }).catch(() => { pendingLoads--; this.state = 0; });
@@ -140,29 +158,35 @@ const roots = [];
 for (let x = meta.REG13.x0; x <= meta.REG13.x1; x++) for (let y = meta.REG13.y0; y <= meta.REG13.y1; y++) roots.push(new Tile(13, x, y));
 
 // ───────────────────────── buildings
-// ── Berlin High School: real outline with its two courtyards and taller gym / auditorium blocks.
-// Walls come from the normal building code; the roof (aerial photo) is added in the landmarks block.
-const SCHOOL = { b: buildingData.find((b) => b[7] > 19000 && Math.hypot(b[5] - 1874.8, b[6] + 2076.4) < 2), roofs: [], holes: [] };
-if (SCHOOL.b) {
-  const b = SCHOOL.b, brick = [0.33, 0.14, 0.095]; let hi = -1e9;
-  for (let i = 8; i < b.length; i += 2) hi = Math.max(hi, H(b[5] + b[i], b[6] + b[i + 1]));
-  SCHOOL.y = hi + 8.6;
+// ── Hand-modelled schools: real outline with courtyards and taller gym / auditorium blocks.
+// Walls come from the normal building code; the roofs (aerial photo) are added in the landmarks block.
+// at: OSM footprint centre, h: wall height (m), holes: courtyards, tall: raised blocks [ring, extra height]
+const CAMPUSES = [
+  { name: 'Berlin High School', at: [1874.8, -2076.4], h: 8.6, brick: [0.33, 0.14, 0.095],
+    holes: [
+      [[1851.4, -2007.7], [1852.9, -1996.3], [1821.8, -1992], [1818.4, -2016.8], [1847.3, -2020.5], [1848.8, -2007.3]],
+      [[1816.3, -2084.9], [1819, -2065.6], [1821.4, -2066], [1822.9, -2055.4], [1820.5, -2055.1], [1823.9, -2030.1], [1844.5, -2032.7], [1837.6, -2087.9]],
+    ],
+    tall: [
+      [[[1947.8, -1982.7], [1968, -1985.3], [1960.6, -2044.1], [1942.9, -2041.6]], 3.6], // gym (east wing)
+      [[[1847.6, -2073.6], [1875.3, -2069.7], [1870, -2032.1], [1842.3, -2036]], 3], // auditorium (centre)
+    ] },
+  { name: 'McGee Middle School', at: [989.1, -1437], h: 7.4, brick: [0.36, 0.17, 0.11],
+    holes: [[[1010, -1397.2], [1005.9, -1396.7], [1003.4, -1415], [1010.7, -1416], [1010.1, -1419.8], [1022.7, -1421.5], [1027, -1388.5], [1023.3, -1388.1], [1022.8, -1392.8], [1010.8, -1391.3]]],
+    tall: [[[[951.6, -1497.3], [991.1, -1502.5], [994.9, -1473.4], [955.3, -1468.2]], 3.2]] }, // gym (north end)
+];
+for (const c of CAMPUSES) {
+  const b = c.b = buildingData.find((b) => b[7] > 5000 && Math.hypot(b[5] - c.at[0], b[6] - c.at[1]) < 2); if (!b) continue;
+  let hi = -1e9; for (let i = 8; i < b.length; i += 2) hi = Math.max(hi, H(b[5] + b[i], b[6] + b[i + 1]));
+  c.y = hi + c.h;
   const part = (ring, y) => { // extra wall ring: [kind, height, roof rgb, cx, cz, area, ...relative points]
     let cx = 0, cz = 0; for (const p of ring) { cx += p[0] / ring.length; cz += p[1] / ring.length; }
     const e = [4, 8, 200, 200, 200, cx, cz, 400]; for (const p of ring) e.push(p[0] - cx, p[1] - cz);
-    e.top = y + 0.45; e.noRoof = true; e.wall = brick; buildingData.push(e);
+    e.top = y + 0.45; e.noRoof = true; e.wall = c.brick; buildingData.push(e);
   };
-  b.top = SCHOOL.y + 0.45; b.noRoof = true; b.wall = brick; // 0.45 m parapet
-  SCHOOL.holes = [
-    [[1851.4, -2007.7], [1852.9, -1996.3], [1821.8, -1992], [1818.4, -2016.8], [1847.3, -2020.5], [1848.8, -2007.3]],
-    [[1816.3, -2084.9], [1819, -2065.6], [1821.4, -2066], [1822.9, -2055.4], [1820.5, -2055.1], [1823.9, -2030.1], [1844.5, -2032.7], [1837.6, -2087.9]],
-  ];
-  for (const h of SCHOOL.holes) part(h, SCHOOL.y);
-  SCHOOL.roofs = [
-    { ring: [[1947.8, -1982.7], [1968, -1985.3], [1960.6, -2044.1], [1942.9, -2041.6]], y: SCHOOL.y + 3.6 }, // gym (east wing)
-    { ring: [[1847.6, -2073.6], [1875.3, -2069.7], [1870, -2032.1], [1842.3, -2036]], y: SCHOOL.y + 3 }, // auditorium (centre)
-  ];
-  for (const r of SCHOOL.roofs) part(r.ring, r.y);
+  b.top = c.y + 0.45; b.noRoof = true; b.wall = c.brick; // 0.45 m parapet
+  for (const h of c.holes) part(h, c.y);
+  for (const [ring, dy] of c.tall) part(ring, c.y + dy);
 }
 const CH = 600, bChunks = new Map();
 for (const b of buildingData) { const k = Math.floor(b[5] / CH) + '_' + Math.floor(b[6] / CH); let c = bChunks.get(k); if (!c) bChunks.set(k, c = { cx: (Math.floor(b[5] / CH) + 0.5) * CH, cz: (Math.floor(b[6] / CH) + 0.5) * CH, list: [], mesh: null }); c.list.push(b); }
@@ -333,7 +357,7 @@ function buildChunk(ch) {
   g.setAttribute('position', new THREE.Float32BufferAttribute(P, 3)); g.setAttribute('color', new THREE.Float32BufferAttribute(C, 3)); g.computeVertexNormals();
   scene.add(new THREE.Mesh(g, new THREE.MeshLambertMaterial({ vertexColors: true, side: THREE.DoubleSide, toneMapped: false })));
 }
-// ───────────────────────── hand-modelled landmarks: Berlin High School campus
+// ───────────────────────── hand-modelled landmarks: school campuses
 // Flat picture laid on the ground (follows the terrain). draw(ctx) works in world metres: x east, y = z south.
 function decal(x0, z0, x1, z1, ppm, draw) {
   const w = x1 - x0, h = z1 - z0, cv = document.createElement('canvas'); cv.width = Math.round(w * ppm); cv.height = Math.round(h * ppm);
@@ -361,13 +385,13 @@ function propMesh(build, opts = {}) {
   const g = new THREE.BufferGeometry(); g.setAttribute('position', new THREE.Float32BufferAttribute(P, 3)); g.setAttribute('color', new THREE.Float32BufferAttribute(C, 3)); g.computeVertexNormals();
   const m = new THREE.Mesh(g, new THREE.MeshLambertMaterial({ vertexColors: true, side: THREE.DoubleSide, toneMapped: false, ...opts })); scene.add(m); return m;
 }
-if (SCHOOL.b) {
-  // roof: the aerial photo itself, so the real roof layout (units, skylights, seams) shows
-  const b = SCHOOL.b, outer = []; for (let i = 8; i < b.length; i += 2) outer.push([b[5] + b[i], b[6] + b[i + 1]]);
+// roof: the aerial photo itself, so the real roof layout (units, solar panels, seams) shows
+function photoRoof(c) {
+  const b = c.b, outer = []; for (let i = 8; i < b.length; i += 2) outer.push([b[5] + b[i], b[6] + b[i + 1]]);
   let x0 = 1e9, x1 = -1e9, z0 = 1e9, z1 = -1e9; for (const p of outer) { x0 = Math.min(x0, p[0]); x1 = Math.max(x1, p[0]); z0 = Math.min(z0, p[1]); z1 = Math.max(z1, p[1]); }
   x0 -= 2; z0 -= 2; x1 += 2; z1 += 2;
   const ppm = 4, cv = document.createElement('canvas'); cv.width = Math.round((x1 - x0) * ppm); cv.height = Math.round((z1 - z0) * ppm);
-  const ctx = cv.getContext('2d'); ctx.fillStyle = '#d9dcdd'; ctx.fillRect(0, 0, cv.width, cv.height);
+  const ctx = cv.getContext('2d'); ctx.fillStyle = '#c9cccd'; ctx.fillRect(0, 0, cv.width, cv.height);
   const tex = new THREE.CanvasTexture(cv); tex.colorSpace = THREE.SRGBColorSpace; tex.anisotropy = renderer.capabilities.getMaxAnisotropy();
   const [rx, rz, ts] = tileRect(16, 19519, 24420), tx0 = Math.floor((x0 - rx) / ts), tx1 = Math.floor((x1 - rx) / ts), tz0 = Math.floor((z0 - rz) / ts), tz1 = Math.floor((z1 - rz) / ts);
   for (let i = tx0; i <= tx1; i++) for (let j = tz0; j <= tz1; j++) {
@@ -381,40 +405,45 @@ if (SCHOOL.b) {
     for (const f of THREE.ShapeUtils.triangulateShape(v2(ring), holes.map(v2))) for (const k of [f[0], f[2], f[1]]) put(all[k][0], y, all[k][1]); // wound to face up
   };
   const ccw = (r) => { let a = 0; for (let i = 0, j = r.length - 1; i < r.length; j = i++) a += r[j][0] * r[i][1] - r[i][0] * r[j][1]; return a > 0 ? r : r.slice().reverse(); };
-  flat(ccw(outer), SCHOOL.holes.map((h) => ccw(h).reverse()), SCHOOL.y);
-  for (const r of SCHOOL.roofs) flat(ccw(r.ring), [], r.y);
+  flat(ccw(outer), c.holes.map((h) => ccw(h).reverse()), c.y);
+  for (const [ring, dy] of c.tall) flat(ccw(ring), [], c.y + dy);
   const g = new THREE.BufferGeometry(); g.setAttribute('position', new THREE.Float32BufferAttribute(P, 3)); g.setAttribute('uv', new THREE.Float32BufferAttribute(U, 2));
   g.setAttribute('normal', new THREE.Float32BufferAttribute(new Float32Array(P.length).map((_, i) => (i % 3 === 1 ? 1 : 0)), 3));
   scene.add(new THREE.Mesh(g, new THREE.MeshLambertMaterial({ map: tex, side: THREE.DoubleSide, toneMapped: false })));
-
-  // tennis courts: crisp painted courts, nets and a chain-link fence
-  const PAD = [[1931.7, -1964.1], [2028.9, -1976.9], [2033.6, -1941], [1935.9, -1928.1]], e = [0.9944, -0.1056], n = [0.1056, 0.9944];
-  const NETS = [[1942.6, -1947.4], [1957, -1949], [1974.7, -1951.7], [1989.7, -1953.2], [2008.1, -1955.9], [2022.6, -1957.9]];
-  decal(1928, -1980, 2037, -1925, 14, (c) => {
-    poly(c, PAD); c.fillStyle = '#a9604b'; c.fill();
+}
+for (const c of CAMPUSES) if (c.b) photoRoof(c);
+// tennis courts: crisp painted courts, nets and a chain-link fence. PAD: fenced corners, NETS: court centres,
+// e / n: unit vectors across / along the courts
+function tennisCourts(PAD, NETS, e, n, padCol, apronCol, courtCol) {
+  let x0 = 1e9, x1 = -1e9, z0 = 1e9, z1 = -1e9; for (const p of PAD) { x0 = Math.min(x0, p[0]); x1 = Math.max(x1, p[0]); z0 = Math.min(z0, p[1]); z1 = Math.max(z1, p[1]); }
+  decal(x0 - 2, z0 - 2, x1 + 2, z1 + 2, 14, (c) => {
+    poly(c, PAD); c.fillStyle = padCol; c.fill();
     for (const [cx, cz] of NETS) {
       c.save(); c.transform(e[0], e[1], n[0], n[1], cx, cz); // court frame: x across, y along
-      c.fillStyle = '#4f7ea6'; c.fillRect(-6.6, -13.3, 13.2, 26.6);
-      c.fillStyle = '#3f6f99'; c.fillRect(-5.485, -11.885, 10.97, 23.77);
+      c.fillStyle = apronCol; c.fillRect(-6.6, -13.3, 13.2, 26.6);
+      c.fillStyle = courtCol; c.fillRect(-5.485, -11.885, 10.97, 23.77);
       c.strokeStyle = '#f4f4f0'; c.lineWidth = 0.09; c.strokeRect(-5.485, -11.885, 10.97, 23.77);
       c.beginPath(); for (const s of [-4.115, 4.115]) { c.moveTo(s, -11.885); c.lineTo(s, 11.885); }
       for (const s of [-6.4, 6.4]) { c.moveTo(-4.115, s); c.lineTo(4.115, s); } c.moveTo(0, -6.4); c.lineTo(0, 6.4); c.stroke();
       c.restore();
     }
   });
-  const at = (o, a, c2) => [o[0] + e[0] * a + n[0] * c2, o[1] + e[1] * a + n[1] * c2];
+  const at = (o, a, c2) => [o[0] + e[0] * a + n[0] * c2, o[1] + e[1] * a + n[1] * c2], N = PAD.length;
   propMesh(({ wallTo }) => {
     for (const o of NETS) { const g0 = H(o[0], o[1]) + 0.2, p = at(o, -6.4, 0), q = at(o, 6.4, 0);
       wallTo(p, q, g0, g0 + 0.92, [0.05, 0.05, 0.055], 0.02); wallTo(p, q, g0 + 0.92, g0 + 1.0, [0.9, 0.9, 0.88], 0.03);
       for (const s of [p, q]) wallTo(at(s, -0.05, 0), at(s, 0.05, 0), g0, g0 + 1.07, [0.1, 0.12, 0.1], 0.05); }
-    for (let i = 0; i < 4; i++) { const p = PAD[i], q = PAD[(i + 1) % 4], l = Math.hypot(q[0] - p[0], q[1] - p[1]), k = Math.round(l / 3);
+    for (let i = 0; i < N; i++) { const p = PAD[i], q = PAD[(i + 1) % N], l = Math.hypot(q[0] - p[0], q[1] - p[1]), k = Math.round(l / 3);
       for (let j = 0; j <= k; j++) { const x = p[0] + (q[0] - p[0]) * j / k, z = p[1] + (q[1] - p[1]) * j / k, g0 = H(x, z); wallTo([x - 0.04, z], [x + 0.04, z], g0, g0 + 3.05, [0.2, 0.22, 0.22], 0.04); }
       const ya = H(p[0], p[1]) + 3, yb = H(q[0], q[1]) + 3; wallTo(p, q, Math.min(ya, yb), Math.min(ya, yb) + 0.06, [0.2, 0.22, 0.22], 0.03); }
   });
   propMesh(({ quad }) => { // fence mesh panels
-    for (let i = 0; i < 4; i++) { const p = PAD[i], q = PAD[(i + 1) % 4], ya = H(p[0], p[1]), yb = H(q[0], q[1]); quad([p[0], ya, p[1]], [q[0], yb, q[1]], [q[0], yb + 3, q[1]], [p[0], ya + 3, p[1]], [0.16, 0.18, 0.18]); }
+    for (let i = 0; i < N; i++) { const p = PAD[i], q = PAD[(i + 1) % N], ya = H(p[0], p[1]), yb = H(q[0], q[1]); quad([p[0], ya, p[1]], [q[0], yb, q[1]], [q[0], yb + 3, q[1]], [p[0], ya + 3, p[1]], [0.16, 0.18, 0.18]); }
   }, { transparent: true, opacity: 0.3, depthWrite: false });
-
+}
+if (CAMPUSES[0].b) { // Berlin High School: six blue courts on a red pad
+  tennisCourts([[1931.7, -1964.1], [2028.9, -1976.9], [2033.6, -1941], [1935.9, -1928.1]],
+    [[1942.6, -1947.4], [1957, -1949], [1974.7, -1951.7], [1989.7, -1953.2], [2008.1, -1955.9], [2022.6, -1957.9]], [0.9944, -0.1056], [0.1056, 0.9944], '#a9604b', '#4f7ea6', '#3f6f99');
   // back field: the photo caught it stripped to dirt, so lay down the track and a grass infield
   const A = [1949.4, -1802.8], B = [1937.2, -1873.2], L = Math.hypot(B[0] - A[0], B[1] - A[1]), d = [(B[0] - A[0]) / L, (B[1] - A[1]) / L], q = [-d[1], d[0]], rIn = 40.9;
   const oval = (c, r) => { c.beginPath(); for (let i = 0; i <= 40; i++) { const t = Math.PI * i / 40, cs = Math.cos(t) * r, sn = Math.sin(t) * r; c.lineTo(B[0] + q[0] * cs + d[0] * sn, B[1] + q[1] * cs + d[1] * sn); }
@@ -435,6 +464,10 @@ if (SCHOOL.b) {
     for (const s of [-1, 1]) { const a = [O[0] + d[0] * s * 50 - q[0] * 3.66, O[1] + d[1] * s * 50 - q[1] * 3.66], b2 = [O[0] + d[0] * s * 50 + q[0] * 3.66, O[1] + d[1] * s * 50 + q[1] * 3.66], g0 = H(a[0], a[1]) + 0.2;
       wallTo(a, b2, g0 + 2.38, g0 + 2.5, w, 0.06); for (const p of [a, b2]) wallTo([p[0] - 0.06, p[1]], [p[0] + 0.06, p[1]], g0, g0 + 2.5, w, 0.06); }
   });
+}
+if (CAMPUSES[1].b) { // McGee Middle School: two green courts north of the gym
+  const e = [0.9903, -0.139], n = [0.139, 0.9903], O = [967.2, -1527.8], at = (a, c2) => [O[0] + e[0] * a + n[0] * c2, O[1] + e[1] * a + n[1] * c2];
+  tennisCourts([at(-16, -18.5), at(16, -18.5), at(16, 18.5), at(-16, 18.5)], [at(-7.65, 0), at(7.65, 0)], e, n, '#5d7f6c', '#6c9079', '#557a66');
 }
 function updateBuildings(p) {
   let todo = null, best = 1e18;
@@ -468,15 +501,23 @@ function treeGeometry(detail, trunk) {
   return g;
 }
 const TREE_LOD = [[treeGeometry(2, true), 330], [treeGeometry(1, true), 720], [treeGeometry(0, false), 1e9]];
+const season = seasonRef; // 0 summer … 1 autumn (shared shader uniform)
 const treeMat = new THREE.MeshLambertMaterial({ vertexColors: true, toneMapped: false });
 treeMat.onBeforeCompile = (sh) => { // leafy mottling
   sh.vertexShader = sh.vertexShader.replace('#include <common>', `#include <common>
-varying vec3 vLeaf;`).replace('#include <begin_vertex>', `#include <begin_vertex>
-vLeaf = position * 26.0 + vec3(instanceMatrix[3].x, 0.0, instanceMatrix[3].z) * 0.37;`);
+varying vec3 vLeaf; varying vec2 vFall;`).replace('#include <begin_vertex>', `#include <begin_vertex>
+vLeaf = position * 26.0 + vec3(instanceMatrix[3].x, 0.0, instanceMatrix[3].z) * 0.37;
+vFall = vec2(step(abs(color.r - color.g), 0.01), fract(sin(dot(instanceMatrix[3].xz, vec2(12.9898, 78.233))) * 43758.5453)); // x: crown (not trunk), y: per-tree random`);
+  sh.uniforms.uAutumn = season;
   sh.fragmentShader = sh.fragmentShader.replace('#include <common>', `#include <common>
-varying vec3 vLeaf;`).replace('#include <color_fragment>', `#include <color_fragment>
+varying vec3 vLeaf; varying vec2 vFall; uniform float uAutumn;`).replace('#include <color_fragment>', `#include <color_fragment>
 float lf = sin(vLeaf.x) * sin(vLeaf.y * 1.3) * sin(vLeaf.z) + 0.5 * sin(vLeaf.x * 2.7 + vLeaf.y * 2.1) * sin(vLeaf.z * 2.3 - vLeaf.y);
-diffuseColor.rgb *= 0.86 + 0.24 * lf;`);
+diffuseColor.rgb *= 0.86 + 0.24 * lf;
+if (uAutumn > 0.0 && vFall.y < 0.9) { // one tree in ten stays evergreen
+  vec3 pal = vFall.y < 0.28 ? vec3(0.50, 0.075, 0.03) : vFall.y < 0.58 ? vec3(0.66, 0.23, 0.035) : vFall.y < 0.8 ? vec3(0.74, 0.47, 0.06) : vec3(0.36, 0.2, 0.06);
+  float fl = dot(diffuseColor.rgb, vec3(0.3, 0.59, 0.11));
+  diffuseColor.rgb = mix(diffuseColor.rgb, pal * (0.28 + 5.6 * fl), uAutumn * vFall.x);
+}`);
 };
 const trees = new THREE.Group(); scene.add(trees);
 const treeTiles = new Map(); let TREE_R = 1400, treeLoads = 0;
@@ -672,7 +713,7 @@ addEventListener('keydown', (e) => {
   if (e.target.tagName === 'INPUT') return;
   const k = e.key.toLowerCase(); keys.add(k); lastInput = performance.now();
   if (['w', 'a', 's', 'd', 'q', 'e', ' ', 'c', 'arrowup', 'arrowdown', 'arrowleft', 'arrowright'].includes(k)) { stopAuto(); e.preventDefault(); }
-  if (k === 't') toggleTour(); if (k === 'l') setTime(timeIdx + 1); if (k === 'n') toggleLabels(); if (k === 'p') togglePlaces(); if (k === 'b') townLine.visible = !townLine.visible;
+  if (k === 't') toggleTour(); if (k === 'l') setTime(timeIdx + 1); if (k === 'n') toggleLabels(); if (k === 'p') togglePlaces(); if (k === 'b') townLine.visible = !townLine.visible; if (k === 'f') toggleSeason();
 });
 addEventListener('keyup', (e) => keys.delete(e.key.toLowerCase()));
 addEventListener('blur', () => keys.clear());
@@ -703,6 +744,7 @@ const TOUR = [
   ['Paper Goods Pond', 'Paper Goods Pond', 'A quiet pond in Kensington, named for the American Paper Goods factory that once stood beside it.', 430, 150],
   ['Worthington Ridge Historic District', 'Worthington Ridge', 'Berlin’s old main street, lined with 18th- and 19th-century homes from the days of the Yankee tin peddlers.', 480, 170],
   ['Berlin High School', 'Berlin High School', 'Home of the Redcoats, whose football team plays down the road at Sage Park.', 420, 160],
+  ['Sage Park', 'Sage Park', 'The town’s main athletic complex — ball fields, a pond, and Scalise Field, where the Redcoats play football.', 520, 180],
   ['East Berlin', 'East Berlin', 'A village of its own on the Mattabesset River, once home to a famous iron bridge works.', 520, 200],
   ['Silver Lake', 'Silver Lake', 'A long, quiet lake on the Meriden line at the south end of town.', 800, 260],
   ['Lamentation Mountain', 'Lamentation Mountain', 'A long traprock ridge with sweeping views, crossed by the Mattabesett Trail.', 900, 240],
@@ -755,6 +797,12 @@ function togglePlaces() { const p = $('places'); p.style.display = p.style.displ
     for (const l of items) { const a = document.createElement('a'); a.textContent = l.n; a.onclick = () => { stopAuto(); p.style.display = 'none'; const big = ['peak', 'water', 'town', 'village', 'park'].includes(l.k); const home = l.k === 'home'; flyTo({ ...l, title: l.n }, home ? 110 : big ? 700 : 380, home ? 45 : big ? 230 : 140, true); }; p.appendChild(a); }
   }
 }
+let seasonTo = 0;
+function toggleSeason() { // fade between summer and autumn
+  seasonTo = seasonTo ? 0 : 1; const b = $('b-season'); b.classList.toggle('on', !!seasonTo); b.textContent = seasonTo ? '🍂 Autumn' : '🌳 Summer';
+  const step = () => { season.value = clamp(season.value + (seasonTo ? 0.03 : -0.03), 0, 1); if (season.value !== seasonTo) requestAnimationFrame(step); }; step();
+}
+$('b-season').onclick = toggleSeason;
 $('b-tour').onclick = toggleTour; $('b-places').onclick = togglePlaces; $('b-time').onclick = () => setTime(timeIdx + 1); $('b-labels').onclick = toggleLabels;
 
 // ───────────────────────── main loop
@@ -816,4 +864,4 @@ progress(1, 'Ready for takeoff');
 $('go').style.display = 'block'; $('lmsg').style.opacity = 0.7;
 const begin = () => { if (started) return; started = true; lastInput = performance.now(); flyTo({ ...start, title: 'Kensington' }, 700, 250, true); $('loading').style.opacity = 0; setTimeout(() => $('loading').remove(), 1000); };
 $('go').onclick = begin;
-window.app = { prof, lockQuality: false, get quality() { return quality; }, set quality(v) { quality = v; applyQuality(); }, fly, flyTo, setTime, begin, H, byName, camera, renderer, scene, toggleTour, stats: () => ({ calls: renderer.info.render.calls, tris: renderer.info.render.triangles, tex: renderer.info.memory.textures, treeTiles: treeTiles.size }) };
+window.app = { prof, lockQuality: false, get quality() { return quality; }, set quality(v) { quality = v; applyQuality(); }, fly, flyTo, setTime, begin, H, byName, camera, renderer, scene, toggleTour, toggleSeason, season, stats: () => ({ calls: renderer.info.render.calls, tris: renderer.info.render.triangles, tex: renderer.info.memory.textures, treeTiles: treeTiles.size }) };
