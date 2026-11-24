@@ -140,6 +140,30 @@ const roots = [];
 for (let x = meta.REG13.x0; x <= meta.REG13.x1; x++) for (let y = meta.REG13.y0; y <= meta.REG13.y1; y++) roots.push(new Tile(13, x, y));
 
 // ───────────────────────── buildings
+// ── Berlin High School: real outline with its two courtyards and taller gym / auditorium blocks.
+// Walls come from the normal building code; the roof (aerial photo) is added in the landmarks block.
+const SCHOOL = { b: buildingData.find((b) => b[7] > 19000 && Math.hypot(b[5] - 1874.8, b[6] + 2076.4) < 2), roofs: [], holes: [] };
+if (SCHOOL.b) {
+  const b = SCHOOL.b, brick = [0.33, 0.14, 0.095]; let hi = -1e9;
+  for (let i = 8; i < b.length; i += 2) hi = Math.max(hi, H(b[5] + b[i], b[6] + b[i + 1]));
+  SCHOOL.y = hi + 8.6;
+  const part = (ring, y) => { // extra wall ring: [kind, height, roof rgb, cx, cz, area, ...relative points]
+    let cx = 0, cz = 0; for (const p of ring) { cx += p[0] / ring.length; cz += p[1] / ring.length; }
+    const e = [4, 8, 200, 200, 200, cx, cz, 400]; for (const p of ring) e.push(p[0] - cx, p[1] - cz);
+    e.top = y + 0.45; e.noRoof = true; e.wall = brick; buildingData.push(e);
+  };
+  b.top = SCHOOL.y + 0.45; b.noRoof = true; b.wall = brick; // 0.45 m parapet
+  SCHOOL.holes = [
+    [[1851.4, -2007.7], [1852.9, -1996.3], [1821.8, -1992], [1818.4, -2016.8], [1847.3, -2020.5], [1848.8, -2007.3]],
+    [[1816.3, -2084.9], [1819, -2065.6], [1821.4, -2066], [1822.9, -2055.4], [1820.5, -2055.1], [1823.9, -2030.1], [1844.5, -2032.7], [1837.6, -2087.9]],
+  ];
+  for (const h of SCHOOL.holes) part(h, SCHOOL.y);
+  SCHOOL.roofs = [
+    { ring: [[1947.8, -1982.7], [1968, -1985.3], [1960.6, -2044.1], [1942.9, -2041.6]], y: SCHOOL.y + 3.6 }, // gym (east wing)
+    { ring: [[1847.6, -2073.6], [1875.3, -2069.7], [1870, -2032.1], [1842.3, -2036]], y: SCHOOL.y + 3 }, // auditorium (centre)
+  ];
+  for (const r of SCHOOL.roofs) part(r.ring, r.y);
+}
 const CH = 600, bChunks = new Map();
 for (const b of buildingData) { const k = Math.floor(b[5] / CH) + '_' + Math.floor(b[6] / CH); let c = bChunks.get(k); if (!c) bChunks.set(k, c = { cx: (Math.floor(b[5] / CH) + 0.5) * CH, cz: (Math.floor(b[6] / CH) + 0.5) * CH, list: [], mesh: null }); c.list.push(b); }
 const bMat = new THREE.MeshLambertMaterial({ vertexColors: true, side: THREE.DoubleSide, toneMapped: false });
@@ -203,7 +227,7 @@ function buildChunk(ch) {
     const hip = (kind === 0 || kind === 1 || kind === 5) && n <= 14 && area < 700;
     const total = b[1] * (kind === 0 ? 1.25 : 1) + (hi - base);
     const st = kind === 5 && STEEPLES.find((q) => Math.hypot(q.b[0] - b[5], q.b[1] - b[6]) < 3);
-    const wall = st ? WHITE : WALLS[kind][Math.floor(r0 * WALLS[kind].length)];
+    const wall = st ? WHITE : b.wall || WALLS[kind][Math.floor(r0 * WALLS[kind].length)];
     let roof = b[2] >= 0 ? [lin(b[2]), lin(b[3]), lin(b[4])] : mul([0.35, 0.34, 0.33], 0.7 + r1 * 0.6);
     const rl = roof[0] * 0.3 + roof[1] * 0.59 + roof[2] * 0.11; // pull tree-shaded (green) roofs back toward neutral
     if (roof[1] > roof[0] * 1.12 && roof[1] > roof[2] * 1.12) roof = [rl * 1.05, rl, rl * 0.95];
@@ -218,7 +242,7 @@ function buildChunk(ch) {
       if (ar < best) { best = ar; if (u1 - u0 >= v1 - v0) { u = [dx, dz]; a = (u1 - u0) / 2; bb = (v1 - v0) / 2; cU = (u0 + u1) / 2; cV = (v0 + v1) / 2; } else { u = [-dz, dx]; a = (v1 - v0) / 2; bb = (u1 - u0) / 2; cU = (v0 + v1) / 2; cV = -(u0 + u1) / 2; } }
     }
     const rise = hip ? Math.min(bb * (kind === 5 ? 1.05 : 0.62), kind === 5 ? 8 : 4.4) : 0;
-    const top = hi + Math.max(2.6, b[1] * (kind === 0 ? 1.25 : 1) - rise * 0.75);
+    const top = b.top ?? hi + Math.max(2.6, b[1] * (kind === 0 ? 1.25 : 1) - rise * 0.75);
     const wlo = mul(wall, 0.66), whi = wall;
     for (let i = 0, j = n - 1; i < n; j = i++) {
       const p = pts[j], q = pts[i], gb = hi - base, th = top - hi;
@@ -245,7 +269,7 @@ function buildChunk(ch) {
           tri([p[0], base, p[1]], [p[0], t0, p[1]], [q[0], t0, q[1]], wlo, whi, whi); tri([p[0], base, p[1]], [q[0], t0, q[1]], [q[0], base, q[1]], wlo, whi, wlo);
           tri([p[0], t0, p[1]], [sx, t1, sz], [q[0], t0, q[1]], rlo, rhi, rlo); }
       }
-    } else {
+    } else if (!b.noRoof) {
       const faces = THREE.ShapeUtils.triangulateShape(pts.map((p) => new THREE.Vector2(p[0], p[1])), []);
       for (const f of faces) tri([cx + pts[f[0]][0], top, cz + pts[f[0]][1]], [cx + pts[f[1]][0], top, cz + pts[f[1]][1]], [cx + pts[f[2]][0], top, cz + pts[f[2]][1]], roof, roof, roof);
       if (area > 150) { // parapet lip
@@ -294,7 +318,7 @@ function buildChunk(ch) {
     for (const [i, j, k, l] of [[4, 5, 6, 7], [0, 1, 5, 4], [1, 2, 6, 5], [2, 3, 7, 6], [3, 0, 4, 7]]) for (const m of [i, j, k, i, k, l]) { P.push(...q[m]); C.push(...col); }
   };
   const stand = (c, half, rows, pressBox) => { // c: signed distance of the front row from the field centre
-    const sg = Math.sign(c), tread = 0.8, riser = 0.42, y0 = g0 - 1;
+    const sg = Math.sign(c), tread = 0.83, riser = 0.42, y0 = g0 - 1;
     for (let i = 0; i < rows; i++) { const sh = i % 2 ? 1 : 0.9; box(-half, half, c + sg * i * tread, c + sg * (i + 1) * tread, y0, g0 + 0.9 + i * riser, [ALU[0] * sh, ALU[1] * sh, ALU[2] * sh]); }
     const back = c + sg * rows * tread, top = g0 + 0.9 + rows * riser;
     box(-half, half, back, back + sg * 0.25, y0, top + 0.7, DARK); // back wall
@@ -303,11 +327,114 @@ function buildChunk(ch) {
     for (let a = -half + half / 2; a < half; a += half / 2) box(a - 0.6, a + 0.6, c, back, y0, g0 + 0.95 + rows * riser * 0.02, DARK); // aisles
     if (pressBox) { box(-7, 7, back - sg * 2.6, back + sg * 0.4, top - 0.2, top + 3.1, RED); box(-6.6, 6.6, back - sg * 2.75, back - sg * 2.6, top + 1.1, top + 2.5, GLASS); box(-7.3, 7.3, back - sg * 2.9, back + sg * 0.7, top + 3.1, top + 3.35, DARK); }
   };
-  stand(41, 21, 11, true); // home side (east)
-  stand(-39.5, 9, 7, false); // visitors (west)
+  stand(45.5, 23, 12, true); // home side (east)
+  stand(-43.5, 10.5, 8, false); // visitors (west)
   const g = new THREE.BufferGeometry();
   g.setAttribute('position', new THREE.Float32BufferAttribute(P, 3)); g.setAttribute('color', new THREE.Float32BufferAttribute(C, 3)); g.computeVertexNormals();
   scene.add(new THREE.Mesh(g, new THREE.MeshLambertMaterial({ vertexColors: true, side: THREE.DoubleSide, toneMapped: false })));
+}
+// ───────────────────────── hand-modelled landmarks: Berlin High School campus
+// Flat picture laid on the ground (follows the terrain). draw(ctx) works in world metres: x east, y = z south.
+function decal(x0, z0, x1, z1, ppm, draw) {
+  const w = x1 - x0, h = z1 - z0, cv = document.createElement('canvas'); cv.width = Math.round(w * ppm); cv.height = Math.round(h * ppm);
+  const ctx = cv.getContext('2d'); ctx.setTransform(ppm, 0, 0, ppm, -x0 * ppm, -z0 * ppm); draw(ctx);
+  const tex = new THREE.CanvasTexture(cv); tex.colorSpace = THREE.SRGBColorSpace; tex.anisotropy = renderer.capabilities.getMaxAnisotropy();
+  const nx = Math.ceil(w / 6), nz = Math.ceil(h / 6), P = [], U = [], I = [];
+  for (let j = 0; j <= nz; j++) for (let i = 0; i <= nx; i++) { const x = x0 + w * i / nx, z = z0 + h * j / nz; P.push(x, H(x, z) + 0.22, z); U.push(i / nx, 1 - j / nz); }
+  for (let j = 0; j < nz; j++) for (let i = 0; i < nx; i++) { const a = j * (nx + 1) + i; I.push(a, a + nx + 1, a + 1, a + 1, a + nx + 1, a + nx + 2); }
+  const g = new THREE.BufferGeometry(); g.setAttribute('position', new THREE.Float32BufferAttribute(P, 3)); g.setAttribute('uv', new THREE.Float32BufferAttribute(U, 2)); g.setIndex(I); g.computeVertexNormals();
+  const m = new THREE.Mesh(g, new THREE.MeshLambertMaterial({ map: tex, transparent: true, depthWrite: false, toneMapped: false, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -6 }));
+  m.renderOrder = 1; scene.add(m); return m;
+}
+const poly = (ctx, ring) => { ctx.beginPath(); ring.forEach((p, i) => (i ? ctx.lineTo(p[0], p[1]) : ctx.moveTo(p[0], p[1]))); ctx.closePath(); };
+// coloured boxes / quads for small 3-D props
+function propMesh(build, opts = {}) {
+  const P = [], C = [];
+  const quad = (a, b, c, d, col) => { for (const v of [a, b, c, a, c, d]) { P.push(v[0], v[1], v[2]); C.push(col[0], col[1], col[2]); } };
+  const wallTo = (p, q, y0, y1, col, t = 0.06) => { // thin vertical slab from p to q (world [x,z])
+    const dx = q[0] - p[0], dz = q[1] - p[1], l = Math.hypot(dx, dz) || 1, nx = -dz / l * t, nz = dx / l * t;
+    const c = [[p[0] - nx, p[1] - nz], [q[0] - nx, q[1] - nz], [q[0] + nx, q[1] + nz], [p[0] + nx, p[1] + nz]];
+    for (let i = 0; i < 4; i++) { const a = c[i], b = c[(i + 1) % 4]; quad([a[0], y0, a[1]], [b[0], y0, b[1]], [b[0], y1, b[1]], [a[0], y1, a[1]], col); }
+    quad(...c.map((v) => [v[0], y1, v[1]]), col);
+  };
+  build({ quad, wallTo });
+  const g = new THREE.BufferGeometry(); g.setAttribute('position', new THREE.Float32BufferAttribute(P, 3)); g.setAttribute('color', new THREE.Float32BufferAttribute(C, 3)); g.computeVertexNormals();
+  const m = new THREE.Mesh(g, new THREE.MeshLambertMaterial({ vertexColors: true, side: THREE.DoubleSide, toneMapped: false, ...opts })); scene.add(m); return m;
+}
+if (SCHOOL.b) {
+  // roof: the aerial photo itself, so the real roof layout (units, skylights, seams) shows
+  const b = SCHOOL.b, outer = []; for (let i = 8; i < b.length; i += 2) outer.push([b[5] + b[i], b[6] + b[i + 1]]);
+  let x0 = 1e9, x1 = -1e9, z0 = 1e9, z1 = -1e9; for (const p of outer) { x0 = Math.min(x0, p[0]); x1 = Math.max(x1, p[0]); z0 = Math.min(z0, p[1]); z1 = Math.max(z1, p[1]); }
+  x0 -= 2; z0 -= 2; x1 += 2; z1 += 2;
+  const ppm = 4, cv = document.createElement('canvas'); cv.width = Math.round((x1 - x0) * ppm); cv.height = Math.round((z1 - z0) * ppm);
+  const ctx = cv.getContext('2d'); ctx.fillStyle = '#d9dcdd'; ctx.fillRect(0, 0, cv.width, cv.height);
+  const tex = new THREE.CanvasTexture(cv); tex.colorSpace = THREE.SRGBColorSpace; tex.anisotropy = renderer.capabilities.getMaxAnisotropy();
+  const [rx, rz, ts] = tileRect(16, 19519, 24420), tx0 = Math.floor((x0 - rx) / ts), tx1 = Math.floor((x1 - rx) / ts), tz0 = Math.floor((z0 - rz) / ts), tz1 = Math.floor((z1 - rz) / ts);
+  for (let i = tx0; i <= tx1; i++) for (let j = tz0; j <= tz1; j++) {
+    const img = new Image(); img.onload = () => { ctx.drawImage(img, (rx + i * ts - x0) * ppm, (rz + j * ts - z0) * ppm, ts * ppm, ts * ppm); tex.needsUpdate = true; };
+    img.src = `data/img/16/${19519 + i}_${24420 + j}.jpg`;
+  }
+  const P = [], U = [];
+  const put = (x, y, z) => { P.push(x, y, z); U.push((x - x0) / (x1 - x0), 1 - (z - z0) / (z1 - z0)); };
+  const flat = (ring, holes, y) => {
+    const v2 = (r) => r.map((p) => new THREE.Vector2(p[0], p[1])), all = [ring, ...holes].flat();
+    for (const f of THREE.ShapeUtils.triangulateShape(v2(ring), holes.map(v2))) for (const k of [f[0], f[2], f[1]]) put(all[k][0], y, all[k][1]); // wound to face up
+  };
+  const ccw = (r) => { let a = 0; for (let i = 0, j = r.length - 1; i < r.length; j = i++) a += r[j][0] * r[i][1] - r[i][0] * r[j][1]; return a > 0 ? r : r.slice().reverse(); };
+  flat(ccw(outer), SCHOOL.holes.map((h) => ccw(h).reverse()), SCHOOL.y);
+  for (const r of SCHOOL.roofs) flat(ccw(r.ring), [], r.y);
+  const g = new THREE.BufferGeometry(); g.setAttribute('position', new THREE.Float32BufferAttribute(P, 3)); g.setAttribute('uv', new THREE.Float32BufferAttribute(U, 2));
+  g.setAttribute('normal', new THREE.Float32BufferAttribute(new Float32Array(P.length).map((_, i) => (i % 3 === 1 ? 1 : 0)), 3));
+  scene.add(new THREE.Mesh(g, new THREE.MeshLambertMaterial({ map: tex, side: THREE.DoubleSide, toneMapped: false })));
+
+  // tennis courts: crisp painted courts, nets and a chain-link fence
+  const PAD = [[1931.7, -1964.1], [2028.9, -1976.9], [2033.6, -1941], [1935.9, -1928.1]], e = [0.9944, -0.1056], n = [0.1056, 0.9944];
+  const NETS = [[1942.6, -1947.4], [1957, -1949], [1974.7, -1951.7], [1989.7, -1953.2], [2008.1, -1955.9], [2022.6, -1957.9]];
+  decal(1928, -1980, 2037, -1925, 14, (c) => {
+    poly(c, PAD); c.fillStyle = '#a9604b'; c.fill();
+    for (const [cx, cz] of NETS) {
+      c.save(); c.transform(e[0], e[1], n[0], n[1], cx, cz); // court frame: x across, y along
+      c.fillStyle = '#4f7ea6'; c.fillRect(-6.6, -13.3, 13.2, 26.6);
+      c.fillStyle = '#3f6f99'; c.fillRect(-5.485, -11.885, 10.97, 23.77);
+      c.strokeStyle = '#f4f4f0'; c.lineWidth = 0.09; c.strokeRect(-5.485, -11.885, 10.97, 23.77);
+      c.beginPath(); for (const s of [-4.115, 4.115]) { c.moveTo(s, -11.885); c.lineTo(s, 11.885); }
+      for (const s of [-6.4, 6.4]) { c.moveTo(-4.115, s); c.lineTo(4.115, s); } c.moveTo(0, -6.4); c.lineTo(0, 6.4); c.stroke();
+      c.restore();
+    }
+  });
+  const at = (o, a, c2) => [o[0] + e[0] * a + n[0] * c2, o[1] + e[1] * a + n[1] * c2];
+  propMesh(({ wallTo }) => {
+    for (const o of NETS) { const g0 = H(o[0], o[1]) + 0.2, p = at(o, -6.4, 0), q = at(o, 6.4, 0);
+      wallTo(p, q, g0, g0 + 0.92, [0.05, 0.05, 0.055], 0.02); wallTo(p, q, g0 + 0.92, g0 + 1.0, [0.9, 0.9, 0.88], 0.03);
+      for (const s of [p, q]) wallTo(at(s, -0.05, 0), at(s, 0.05, 0), g0, g0 + 1.07, [0.1, 0.12, 0.1], 0.05); }
+    for (let i = 0; i < 4; i++) { const p = PAD[i], q = PAD[(i + 1) % 4], l = Math.hypot(q[0] - p[0], q[1] - p[1]), k = Math.round(l / 3);
+      for (let j = 0; j <= k; j++) { const x = p[0] + (q[0] - p[0]) * j / k, z = p[1] + (q[1] - p[1]) * j / k, g0 = H(x, z); wallTo([x - 0.04, z], [x + 0.04, z], g0, g0 + 3.05, [0.2, 0.22, 0.22], 0.04); }
+      const ya = H(p[0], p[1]) + 3, yb = H(q[0], q[1]) + 3; wallTo(p, q, Math.min(ya, yb), Math.min(ya, yb) + 0.06, [0.2, 0.22, 0.22], 0.03); }
+  });
+  propMesh(({ quad }) => { // fence mesh panels
+    for (let i = 0; i < 4; i++) { const p = PAD[i], q = PAD[(i + 1) % 4], ya = H(p[0], p[1]), yb = H(q[0], q[1]); quad([p[0], ya, p[1]], [q[0], yb, q[1]], [q[0], yb + 3, q[1]], [p[0], ya + 3, p[1]], [0.16, 0.18, 0.18]); }
+  }, { transparent: true, opacity: 0.3, depthWrite: false });
+
+  // back field: the photo caught it stripped to dirt, so lay down the track and a grass infield
+  const A = [1949.4, -1802.8], B = [1937.2, -1873.2], L = Math.hypot(B[0] - A[0], B[1] - A[1]), d = [(B[0] - A[0]) / L, (B[1] - A[1]) / L], q = [-d[1], d[0]], rIn = 40.9;
+  const oval = (c, r) => { c.beginPath(); for (let i = 0; i <= 40; i++) { const t = Math.PI * i / 40, cs = Math.cos(t) * r, sn = Math.sin(t) * r; c.lineTo(B[0] + q[0] * cs + d[0] * sn, B[1] + q[1] * cs + d[1] * sn); }
+    for (let i = 0; i <= 40; i++) { const t = Math.PI * i / 40, cs = Math.cos(t) * r, sn = Math.sin(t) * r; c.lineTo(A[0] - q[0] * cs - d[0] * sn, A[1] - q[1] * cs - d[1] * sn); } c.closePath(); };
+  decal(1884, -1926, 2003, -1750, 7, (c) => {
+    oval(c, rIn + 6 * 1.22 + 0.5); c.fillStyle = '#a4513c'; c.fill();
+    c.strokeStyle = 'rgba(245,242,235,0.85)'; c.lineWidth = 0.1; for (let k = 0; k <= 6; k++) { oval(c, rIn + k * 1.22); c.stroke(); }
+    c.save(); oval(c, rIn - 0.05); c.clip(); c.fillStyle = '#5c7d45'; c.fillRect(1880, -1930, 130, 190);
+    c.transform(q[0], q[1], d[0], d[1], (A[0] + B[0]) / 2, (A[1] + B[1]) / 2); // field frame: x across, y along
+    c.fillStyle = 'rgba(120,160,90,0.35)'; for (let s = -80; s < 80; s += 11) c.fillRect(-45, s, 90, 5.5); // mowing stripes
+    c.strokeStyle = 'rgba(245,245,240,0.8)'; c.lineWidth = 0.14; c.strokeRect(-30, -50, 60, 100); // multi-use field lines
+    c.beginPath(); c.moveTo(-30, 0); c.lineTo(30, 0); c.moveTo(9.15, 0); c.arc(0, 0, 9.15, 0, Math.PI * 2);
+    for (const s of [-1, 1]) { c.rect(-20.15, s * 50 - (s > 0 ? 16.5 : 0), 40.3, 16.5); c.rect(-9.15, s * 50 - (s > 0 ? 5.5 : 0), 18.3, 5.5); } c.stroke();
+    c.restore();
+  });
+  propMesh(({ wallTo }) => { // goals at each end of the field
+    const O = [(A[0] + B[0]) / 2, (A[1] + B[1]) / 2], w = [0.93, 0.93, 0.9];
+    for (const s of [-1, 1]) { const a = [O[0] + d[0] * s * 50 - q[0] * 3.66, O[1] + d[1] * s * 50 - q[1] * 3.66], b2 = [O[0] + d[0] * s * 50 + q[0] * 3.66, O[1] + d[1] * s * 50 + q[1] * 3.66], g0 = H(a[0], a[1]) + 0.2;
+      wallTo(a, b2, g0 + 2.38, g0 + 2.5, w, 0.06); for (const p of [a, b2]) wallTo([p[0] - 0.06, p[1]], [p[0] + 0.06, p[1]], g0, g0 + 2.5, w, 0.06); }
+  });
 }
 function updateBuildings(p) {
   let todo = null, best = 1e18;
