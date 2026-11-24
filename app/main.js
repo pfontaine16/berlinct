@@ -282,6 +282,33 @@ function buildChunk(ch) {
   g.computeBoundingSphere();
   ch.mesh = new THREE.Mesh(g, bMat); ch.mesh.position.set(ch.cx, 0, ch.cz); ch.mesh.matrixAutoUpdate = false; ch.mesh.updateMatrix(); buildings.add(ch.mesh);
 }
+// Hand-modelled grandstands at the Sage Park football field (positions read off the aerial photo).
+{
+  const P = [], C = [], O = [2459, -510], ax = [0.465, -0.886], px = [0.886, 0.465]; // field centre, long axis, cross axis
+  const ALU = hx('#b9bec3'), DARK = hx('#5b6066'), RED = hx('#8e1b1f'), GLASS = hx('#27303a');
+  const g0 = H(O[0], O[1]);
+  // box in the field frame: a along the sideline, c away from the field centre
+  const box = (a0, a1, c0, c1, y0, y1, col) => {
+    const v = (a, c, y) => [O[0] + ax[0] * a + px[0] * c, y, O[1] + ax[1] * a + px[1] * c];
+    const q = [v(a0, c0, y0), v(a1, c0, y0), v(a1, c1, y0), v(a0, c1, y0), v(a0, c0, y1), v(a1, c0, y1), v(a1, c1, y1), v(a0, c1, y1)];
+    for (const [i, j, k, l] of [[4, 5, 6, 7], [0, 1, 5, 4], [1, 2, 6, 5], [2, 3, 7, 6], [3, 0, 4, 7]]) for (const m of [i, j, k, i, k, l]) { P.push(...q[m]); C.push(...col); }
+  };
+  const stand = (c, half, rows, pressBox) => { // c: signed distance of the front row from the field centre
+    const sg = Math.sign(c), tread = 0.8, riser = 0.42, y0 = g0 - 1;
+    for (let i = 0; i < rows; i++) { const sh = i % 2 ? 1 : 0.9; box(-half, half, c + sg * i * tread, c + sg * (i + 1) * tread, y0, g0 + 0.9 + i * riser, [ALU[0] * sh, ALU[1] * sh, ALU[2] * sh]); }
+    const back = c + sg * rows * tread, top = g0 + 0.9 + rows * riser;
+    box(-half, half, back, back + sg * 0.25, y0, top + 0.7, DARK); // back wall
+    box(-half, half, c - sg * 0.2, c, y0, g0 + 1.6, DARK); // front rail
+    for (const e of [-half, half]) box(e - 0.12, e + 0.12, c, back, y0, top + 0.3, DARK); // end walls
+    for (let a = -half + half / 2; a < half; a += half / 2) box(a - 0.6, a + 0.6, c, back, y0, g0 + 0.95 + rows * riser * 0.02, DARK); // aisles
+    if (pressBox) { box(-7, 7, back - sg * 2.6, back + sg * 0.4, top - 0.2, top + 3.1, RED); box(-6.6, 6.6, back - sg * 2.75, back - sg * 2.6, top + 1.1, top + 2.5, GLASS); box(-7.3, 7.3, back - sg * 2.9, back + sg * 0.7, top + 3.1, top + 3.35, DARK); }
+  };
+  stand(41, 21, 11, true); // home side (east)
+  stand(-39.5, 9, 7, false); // visitors (west)
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(P, 3)); g.setAttribute('color', new THREE.Float32BufferAttribute(C, 3)); g.computeVertexNormals();
+  scene.add(new THREE.Mesh(g, new THREE.MeshLambertMaterial({ vertexColors: true, side: THREE.DoubleSide, toneMapped: false })));
+}
 function updateBuildings(p) {
   let todo = null, best = 1e18;
   for (const ch of bChunks.values()) {
@@ -548,12 +575,12 @@ const TOUR = [
   ['Berlin Station', 'Berlin Station', 'Trains have stopped here since the 1800s — today it serves the Hartford Line and Amtrak.', 380, 150],
   ['Paper Goods Pond', 'Paper Goods Pond', 'A quiet pond in Kensington, named for the American Paper Goods factory that once stood beside it.', 430, 150],
   ['Worthington Ridge Historic District', 'Worthington Ridge', 'Berlin’s old main street, lined with 18th- and 19th-century homes from the days of the Yankee tin peddlers.', 480, 170],
+  ['Berlin High School', 'Berlin High School', 'Home of the Redcoats, whose football team plays down the road at Sage Park.', 420, 160],
   ['East Berlin', 'East Berlin', 'A village of its own on the Mattabesset River, once home to a famous iron bridge works.', 520, 200],
   ['Silver Lake', 'Silver Lake', 'A long, quiet lake on the Meriden line at the south end of town.', 800, 260],
   ['Lamentation Mountain', 'Lamentation Mountain', 'A long traprock ridge with sweeping views, crossed by the Mattabesett Trail.', 900, 240],
   ['Timberlin Golf Course', 'Timberlin', 'The town’s public golf course and park, set in the hills of Kensington.', 700, 230],
   ['Ragged Mountain', 'Ragged Mountain', 'Cliffs loved by hikers and rock climbers, looking down on the Hart Ponds and reservoirs.', 850, 230],
-  ['Berlin High School', 'Berlin High School', 'Home of the Redcoats.', 420, 160],
 ].map(([n, title, blurb, r, h]) => ({ ...(byName(n) || {}), title, blurb, r, h })).filter((s) => s.x !== undefined);
 
 function lookFrom(pos, target) { const dx = target.x - pos.x, dy = target.y - pos.y, dz = target.z - pos.z; return [Math.atan2(dx, -dz), Math.atan2(dy, Math.hypot(dx, dz))]; }
