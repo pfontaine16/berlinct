@@ -1,0 +1,6 @@
+# raw downloads and build libraries: regenerate with the scripts in build/
+/raw/
+/data/
+node_modules/
+build/t.txt
+build/patch*.mjs

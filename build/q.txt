@@ -1,0 +1,14 @@
+[out:json][timeout:170][bbox:41.555,-72.845,41.675,-72.685];
+(
+ way["building"]; relation["building"];
+ way["highway"];
+ way["railway"="rail"];
+ way["natural"~"water|wood|scrub|wetland|cliff"]; relation["natural"~"water|wood"];
+ way["waterway"];
+ way["landuse"]; relation["landuse"];
+ way["leisure"]; way["golf"];
+ way["power"="line"];
+ node["place"]; node["amenity"]["name"]; way["amenity"]["name"]; node["natural"="peak"]; node["railway"="station"]; node["tourism"]["name"]; node["historic"]["name"]; way["historic"]["name"]; node["shop"]["name"];
+ relation["boundary"="administrative"]["name"="Berlin"]["admin_level"="8"];
+);
+out geom;
