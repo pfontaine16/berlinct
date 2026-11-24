@@ -12,6 +12,7 @@ const progress = (f, msg) => { $('lbar').style.width = Math.round(f * 100) + '%'
 progress(0.05, 'Loading map data…');
 const [meta, tileList, treeCounts, labelData, waterData, roadData, boundary, buildingData] = await Promise.all(
   ['meta.json', 'tiles.json', 'trees.json', 'labels.json', 'water.json', 'roads.json', 'boundary.json', 'buildings.json'].map(J));
+labelData.push({ n: 'Home · 2 Misty Mountain Road', k: 'home', x: 75, z: -2222 });
 progress(0.2, 'Loading elevation…');
 const heights = new Uint16Array(await (await fetch('data/height.bin')).arrayBuffer());
 const { R, K, MX0, MY0 } = meta;
@@ -174,6 +175,14 @@ const WALLS = [
 const hash = (a, b) => { let h = Math.imul(a * 73856093 ^ b * 19349663, 2654435761) >>> 0; h ^= h >>> 15; return ((h >>> 0) % 4096) / 4096; };
 const lin = (v) => { v /= 255; return v < 0.04045 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4); };
 
+// Hand-modelled landmark churches: sanctuary gable + tall white steeple.
+// b: OSM footprint centre (to match the building), x/z: steeple, w: tower half-width, s: height scale,
+// nave: [centre x, centre z, half length, half width], ax: nave axis
+const STEEPLES = [
+  { b: [2375.5, -1802.7], x: 2399.3, z: -1804.5, w: 2.7, s: 1, nave: [2386, -1805.5, 11, 7.5], ax: [1, 0] }, // Berlin Congregational
+  { b: [-667, -2171.5], x: -655.5, z: -2170.5, w: 2.5, s: 0.88, nave: [-647.5, -2178, 13.5, 8], ax: [0.7071, -0.7071] }, // Kensington Congregational
+];
+const WHITE = hx('#f6f4ee'), SLATE = hx('#4a4c50'), LOUVRE = hx('#2e3033');
 function buildChunk(ch) {
   const P = [], N = [], C = [], Wv = [];
   let wL = 0, wH = 0; // current wall length / height (0 = plain surface, <0 = roof)
@@ -193,7 +202,8 @@ function buildChunk(ch) {
     let base = 1e9, hi = -1e9; for (const p of pts) { const h = H(b[5] + p[0], b[6] + p[1]); base = Math.min(base, h); hi = Math.max(hi, h); }
     const hip = (kind === 0 || kind === 1 || kind === 5) && n <= 14 && area < 700;
     const total = b[1] * (kind === 0 ? 1.25 : 1) + (hi - base);
-    const wall = WALLS[kind][Math.floor(r0 * WALLS[kind].length)];
+    const st = kind === 5 && STEEPLES.find((q) => Math.hypot(q.b[0] - b[5], q.b[1] - b[6]) < 3);
+    const wall = st ? WHITE : WALLS[kind][Math.floor(r0 * WALLS[kind].length)];
     let roof = b[2] >= 0 ? [lin(b[2]), lin(b[3]), lin(b[4])] : mul([0.35, 0.34, 0.33], 0.7 + r1 * 0.6);
     const rl = roof[0] * 0.3 + roof[1] * 0.59 + roof[2] * 0.11; // pull tree-shaded (green) roofs back toward neutral
     if (roof[1] > roof[0] * 1.12 && roof[1] > roof[2] * 1.12) roof = [rl * 1.05, rl, rl * 0.95];
@@ -242,6 +252,29 @@ function buildChunk(ch) {
         const lip = mul(wall, 0.9), t2 = top + 0.5;
         for (let i = 0, j = n - 1; i < n; j = i++) { const p = pts[j], q = pts[i]; tri([cx + p[0], top, cz + p[1]], [cx + p[0], t2, cz + p[1]], [cx + q[0], t2, cz + q[1]], lip, lip, lip); tri([cx + p[0], top, cz + p[1]], [cx + q[0], t2, cz + q[1]], [cx + q[0], top, cz + q[1]], lip, lip, lip); }
       }
+    }
+    if (st) {
+      wL = 0; wH = 0;
+      const [ux, uz] = st.ax, [ncx, ncz, nl, nw] = st.nave, ox = ncx - ch.cx, oz = ncz - ch.cz, rg = nw * 0.8, lo = mul(WHITE, 0.8);
+      const at = (a, c, y) => [ox + ux * a - uz * c, y, oz + uz * a + ux * c];
+      const quad = (a, b2, c, d, c0, c1) => { tri(a, b2, c, c0, c0, c1); tri(a, c, d, c0, c1, c1); };
+      for (const sd of [-1, 1]) { // gable roof over the sanctuary
+        quad(at(-nl - 0.4, sd * (nw + 0.4), top - 0.3), at(nl + 0.4, sd * (nw + 0.4), top - 0.3), at(nl + 0.4, 0, top + rg), at(-nl - 0.4, 0, top + rg), mul(SLATE, 0.9), mul(SLATE, 1.1));
+        tri(at(sd * nl, -nw, top), at(sd * nl, nw, top), at(sd * nl, 0, top + rg), WHITE, WHITE, WHITE);
+      }
+      const sx = st.x - ch.cx, sz = st.z - ch.cz, k = st.s;
+      const ring = (w, y, m = 4) => Array.from({ length: m }, (_, i) => { const t = (i + 0.5) / m * Math.PI * 2, r = w / Math.cos(Math.PI / m), a = Math.cos(t) * r, c = Math.sin(t) * r; return [sx + ux * a - uz * c, y, sz + uz * a + ux * c]; });
+      const stage = (w, y0, y1, c0 = lo, c1 = WHITE) => { const A = ring(w, y0), B = ring(w, y1); for (let i = 0; i < 4; i++) quad(A[i], A[(i + 1) % 4], B[(i + 1) % 4], B[i], c0, c1); quad(B[0], B[1], B[2], B[3], WHITE, WHITE); };
+      let y = top + rg + 2.5 * k;
+      stage(st.w, base - 1.5, y, mul(WHITE, 0.72));
+      stage(st.w + 0.35, y, y + 0.5, lo, lo); y += 0.5;
+      const bw = st.w * 0.8, bh = 5.5 * k;
+      stage(bw, y, y + bh);
+      { const A = ring(bw + 0.06, y + bh * 0.2), B = ring(bw + 0.06, y + bh * 0.82); // belfry louvres
+        for (let i = 0; i < 4; i++) { const j = (i + 1) % 4, mx = (p, q, t) => [p[0] + (q[0] - p[0]) * t, p[1], p[2] + (q[2] - p[2]) * t]; quad(mx(A[i], A[j], 0.28), mx(A[i], A[j], 0.72), mx(B[i], B[j], 0.72), mx(B[i], B[j], 0.28), LOUVRE, LOUVRE); } }
+      y += bh; stage(bw + 0.35, y, y + 0.45, lo, lo); y += 0.45;
+      const lw = st.w * 0.58; stage(lw, y, y + 3.2 * k); y += 3.2 * k; stage(lw + 0.3, y, y + 0.35, lo, lo); y += 0.35;
+      { const A = ring(lw * 0.95, y, 8), ap = [sx, y + 15 * k, sz]; for (let i = 0; i < 8; i++) tri(A[i], A[(i + 1) % 8], ap, i % 2 ? WHITE : mul(WHITE, 0.9), i % 2 ? WHITE : mul(WHITE, 0.9), WHITE); } // spire
     }
   }
   const g = new THREE.BufferGeometry();
@@ -402,8 +435,8 @@ let townLine;
 }
 
 // ───────────────────────── labels
-const RANGE = { town: 40000, village: 14000, hood: 5000, peak: 11000, water: 5500, park: 3800, school: 3000, civic: 2400, church: 2400, historic: 2400 };
-const PRIO = { town: 0, village: 1, peak: 2, hood: 3, water: 4, park: 5, school: 6, civic: 7, historic: 7, church: 8 };
+const RANGE = { town: 40000, village: 14000, hood: 5000, peak: 11000, water: 5500, park: 3800, school: 3000, civic: 2400, church: 2400, historic: 2400, home: 2400 };
+const PRIO = { town: 0, village: 1, peak: 2, hood: 3, water: 4, park: 5, school: 6, civic: 7, historic: 7, church: 8, home: 5 };
 const labelLayer = $('labels'); let labelsOn = true;
 const labels = labelData.map((l) => {
   const el = document.createElement('div'); el.className = 'lb ' + l.k; el.textContent = l.n; el.appendChild(document.createElement('i')); el.style.opacity = 0; labelLayer.appendChild(el);
@@ -560,12 +593,12 @@ function caption(p) { const c = $('caption'); if (!p) { c.style.opacity = 0; ret
 function toggleLabels() { labelsOn = !labelsOn; $('b-labels').classList.toggle('on', labelsOn); }
 function togglePlaces() { const p = $('places'); p.style.display = p.style.display === 'block' ? 'none' : 'block'; }
 {
-  const groups = [['Villages & neighborhoods', ['town', 'village', 'hood']], ['Hills & ridges', ['peak']], ['Ponds & lakes', ['water']], ['Parks & recreation', ['park']], ['Schools', ['school']], ['Around town', ['civic', 'historic', 'church']]];
+  const groups = [['Home', ['home']], ['Villages & neighborhoods', ['town', 'village', 'hood']], ['Hills & ridges', ['peak']], ['Ponds & lakes', ['water']], ['Parks & recreation', ['park']], ['Schools', ['school']], ['Around town', ['civic', 'historic', 'church']]];
   const p = $('places');
   for (const [title, kinds] of groups) {
     const items = labelData.filter((l) => kinds.includes(l.k) && (inTown(l.x, l.z) || l.k === 'peak' || l.k === 'town')).sort((a, b) => a.n.localeCompare(b.n)); if (!items.length) continue;
     const h = document.createElement('h4'); h.textContent = title; p.appendChild(h);
-    for (const l of items) { const a = document.createElement('a'); a.textContent = l.n; a.onclick = () => { stopAuto(); p.style.display = 'none'; const big = ['peak', 'water', 'town', 'village', 'park'].includes(l.k); flyTo({ ...l, title: l.n }, big ? 700 : 380, big ? 230 : 140, true); }; p.appendChild(a); }
+    for (const l of items) { const a = document.createElement('a'); a.textContent = l.n; a.onclick = () => { stopAuto(); p.style.display = 'none'; const big = ['peak', 'water', 'town', 'village', 'park'].includes(l.k); const home = l.k === 'home'; flyTo({ ...l, title: l.n }, home ? 110 : big ? 700 : 380, home ? 45 : big ? 230 : 140, true); }; p.appendChild(a); }
   }
 }
 $('b-tour').onclick = toggleTour; $('b-places').onclick = togglePlaces; $('b-time').onclick = () => setTime(timeIdx + 1); $('b-labels').onclick = toggleLabels;
