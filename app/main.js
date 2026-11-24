@@ -296,7 +296,7 @@ const treeTiles = new Map(); let TREE_R = 1400, treeLoads = 0;
 const S16 = 2 * R / 65536;
 function loadTrees(key, tx, ty) {
   const t = { state: 1, mk: null, lod: null, cx: 0, cz: 0 }; treeTiles.set(key, t); treeLoads++;
-  fetch(`data/trees/${key}.bin?v=2`).then((r) => r.arrayBuffer()).then((buf) => {
+  fetch(`data/trees/${key}.bin?v=3`).then((r) => r.arrayBuffer()).then((buf) => {
     treeLoads--; if (t.state !== 1) return;
     const dv = new DataView(buf), n = buf.byteLength / 8, [x0, z0, size] = tileRect(16, tx, ty);
     t.cx = x0 + size / 2; t.cz = z0 + size / 2;

@@ -3,6 +3,7 @@
 import fs from 'fs';
 import sharp from 'sharp';
 import { CORE15, fp, exists, tileRect, pool } from './common.mjs';
+import { inClearing } from './clearings.mjs';
 
 fs.mkdirSync(fp('app/data/trees/'), { recursive: true });
 const B = 12, N = Math.floor(1024 / B); // 12px = ~5.4 m cells
@@ -56,7 +57,7 @@ await pool(jobs, 4, async ([x, y]) => {
     if (rand() > 0.35 + conf) continue;
     const fx = (cx + 0.15 + rand() * 0.7) / N, fy = (cy + 0.15 + rand() * 0.7) / N;
     const X = wx + fx * ws, Z = wz + fy * ws;
-    if (inBuilding(X, Z) || onRoad(X, Z) || inWater(X, Z)) continue;
+    if (inBuilding(X, Z) || onRoad(X, Z) || inWater(X, Z) || inClearing(X, Z)) continue;
     const h = 9 + rand() * 9 + conf * 4; // metres
     recs.push(Math.round(fx * 65535), Math.round(fy * 65535), r, g, b, h);
   }
