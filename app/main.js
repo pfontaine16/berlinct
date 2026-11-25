@@ -24,6 +24,18 @@ function H(x, z) { // terrain height (m) at world x,z
   const i = u | 0, j = v | 0, fu = u - i, fv = v - j, o = j * HW + i;
   return ((heights[o] * (1 - fu) + heights[o + 1] * fu) * (1 - fv) + (heights[o + HW] * (1 - fu) + heights[o + HW + 1] * fu) * fv) / 10 - 100;
 }
+// Regrade the lot at 2 Misty Mountain Road. The elevation model tilts it sideways; really the front lawn is
+// level with the house and the ground falls away behind it (walk-out basement).
+{
+  const C = [76.2, -2223], O = [66.3, -2230.6], V = [-0.333, 0.943], L = 47.8, R0 = 15, R1 = 36, cs = HS / HW;
+  const i0 = Math.floor((C[0] - R1 - HX0) / cs), j0 = Math.floor((C[1] - R1 - HZ0) / cs), nn = Math.ceil(2 * R1 / cs) + 1;
+  for (let j = j0; j <= j0 + nn; j++) for (let i = i0; i <= i0 + nn; i++) {
+    const x = HX0 + (i + 0.5) * cs, z = HZ0 + (j + 0.5) * cs, d = Math.hypot(x - C[0], z - C[1]); if (d >= R1) continue;
+    const t = clamp((R1 - d) / (R1 - R0), 0, 1), w = t * t * (3 - 2 * t), v = (x - O[0]) * V[0] + (z - O[1]) * V[1]; // v: metres in front of the back wall
+    const target = L - clamp((5 - v) * 0.3, 0, 2.6), o = j * HW + i;
+    heights[o] = Math.round(heights[o] * (1 - w) + (target + 100) * 10 * w);
+  }
+}
 const tileRect = (z, x, y) => { const s = 2 * R / 2 ** z; return [(-R + x * s - MX0) * K, -(R - y * s - MY0) * K, s * K]; };
 const WORLD = { x0: HX0 + 400, z0: HZ0 + 400, x1: HX0 + HS - 400, z1: HZ0 + HS - 400 };
 
@@ -243,6 +255,7 @@ function buildChunk(ch) {
   };
   const mul = (c, f) => [c[0] * f, c[1] * f, c[2] * f];
   for (const b of ch.list) {
+    if (b.skip) continue; // replaced by a hand-built model
     const kind = b[0], cx = b[5] - ch.cx, cz = b[6] - ch.cz, area = b[7], n = (b.length - 8) / 2, r0 = hash(b[5] * 10 | 0, b[6] * 10 | 0), r1 = hash(b[6] * 10 | 0, b[5] * 7 | 0);
     let pts = []; for (let i = 0; i < n; i++) pts.push([b[8 + i * 2], b[9 + i * 2]]);
     let A = 0; for (let i = 0, j = n - 1; i < n; j = i++) A += pts[j][0] * pts[i][1] - pts[i][0] * pts[j][1];
@@ -468,6 +481,100 @@ if (CAMPUSES[0].b) { // Berlin High School: six blue courts on a red pad
 if (CAMPUSES[1].b) { // McGee Middle School: two green courts north of the gym
   const e = [0.9903, -0.139], n = [0.139, 0.9903], O = [967.2, -1527.8], at = (a, c2) => [O[0] + e[0] * a + n[0] * c2, O[1] + e[1] * a + n[1] * c2];
   tennisCourts([at(-16, -18.5), at(16, -18.5), at(16, 18.5), at(-16, 18.5)], [at(-7.65, 0), at(7.65, 0)], e, n, '#5d7f6c', '#6c9079', '#557a66');
+}
+// ───────────────────────── hand-modelled house: 2 Misty Mountain Road
+// Gambrel (Dutch colonial) house with a full shed dormer across the back, a breezeway, a one-car garage and a
+// rear deck, modelled from photographs. Frame: O = back (north-west) corner of the footprint, u along the
+// house (west → east), v from the back toward the road.
+{
+  const fp = buildingData.find((b) => Math.hypot(b[5] - 73.4, b[6] + 2222.6) < 2);
+  if (fp) {
+    fp.skip = true;
+    const O = [66.3, -2230.6], U = [0.943, 0.333], V = [-0.333, 0.943];
+    const at = (u, v, y) => [O[0] + U[0] * u + V[0] * v, y, O[1] + U[1] * u + V[1] * v];
+    const gh = (u, v) => { const p = at(u, v, 0); return H(p[0], p[2]); };
+    const SIDING = hx('#cfc9ae'), TRIM = hx('#f4f2ec'), GLASS = hx('#27313c'), ROOF = hx('#94735a'), ROOF2 = hx('#86664e'), BLUE = hx('#2a7bbd'),
+      BRICK = hx('#8e5440'), CONC = hx('#a5a198'), WOOD = hx('#ab8759'), DOORW = hx('#eeeeea');
+    const U0 = 10, U1 = 21, V0 = 1, V1 = 8.7, VR = (V0 + V1) / 2; // main block
+    const G0 = 0.6, G1 = 5.6, GV0 = 0.6, GV1 = 6.9, GR = (G0 + G1) / 2; // garage
+    const F = Math.max(gh(U0, V1), gh(15.5, V1), gh(U1, V1)) + 0.4; // main floor
+    const Fg = Math.min(F - 0.25, Math.max(gh(G0, GV1), gh(G1, GV1)) + 0.1), Tg = Fg + 2.45; // garage floor / eave
+    let base = 1e9; for (let u = -1; u <= 22; u += 2.5) for (let v = -5; v <= 11; v += 2) base = Math.min(base, gh(u, v)); base -= 1;
+    propMesh(({ quad }) => {
+      const sh = (c, f) => [c[0] * f, c[1] * f, c[2] * f];
+      const face = (p, q, y0, y1, col) => quad(at(p[0], p[1], y0), at(q[0], q[1], y0), at(q[0], q[1], y1), at(p[0], p[1], y1), col);
+      const box = (u0, u1, v0, v1, y0, y1, col, top = col) => {
+        face([u0, v0], [u1, v0], y0, y1, col); face([u1, v0], [u1, v1], y0, y1, col); face([u1, v1], [u0, v1], y0, y1, col); face([u0, v1], [u0, v0], y0, y1, col);
+        quad(at(u0, v0, y1), at(u1, v0, y1), at(u1, v1, y1), at(u0, v1, y1), top);
+      };
+      // flat panel standing `off` proud of a wall: c = centre [u,v], d = along the wall, n = outward
+      const panel = (c, d, n, off, w, y0, y1, col) => face([c[0] - d[0] * w / 2 + n[0] * off, c[1] - d[1] * w / 2 + n[1] * off], [c[0] + d[0] * w / 2 + n[0] * off, c[1] + d[1] * w / 2 + n[1] * off], y0, y1, col);
+      const win = (c, d, n, y0, w, h) => { panel(c, d, n, 0.04, w + 0.26, y0 - 0.13, y0 + h + 0.13, TRIM); panel(c, d, n, 0.07, w, y0, y0 + h, GLASS); panel(c, d, n, 0.09, w, y0 + h / 2 - 0.03, y0 + h / 2 + 0.03, TRIM); };
+      const door = (c, d, n, y0, w, h, col) => { panel(c, d, n, 0.04, w + 0.28, y0, y0 + h + 0.14, TRIM); panel(c, d, n, 0.07, w, y0, y0 + h, col); };
+      const FR = [1, 0], N_F = [0, 1], N_B = [0, -1], SD = [0, 1], N_W = [-1, 0], N_E = [1, 0];
+
+      // ── main block: walls
+      const yk = F + 4.95, yr = F + 6.05, yb = F + 5.1; // gambrel knee, ridge, back wall top
+      face([U0, V1], [U1, V1], base, F - 0.2, CONC); face([U0, V1], [U1, V1], F - 0.2, F + 2.4, SIDING); // front
+      face([U0, V0], [U1, V0], base, F - 2.45, CONC); face([U0, V0], [U1, V0], F - 2.45, yb, sh(SIDING, 0.97)); // back (two full storeys over a walk-out basement)
+      for (const u of [U0, U1]) { // gable ends
+        face([u, V0], [u, V1], base, F - 0.2, CONC);
+        quad(at(u, V0, F - 0.2), at(u, V1, F - 0.2), at(u, V1, F + 2.9), at(u, V1 - 1, yk), SIDING);
+        quad(at(u, V0, F - 0.2), at(u, V1 - 1, yk), at(u, VR, yr), at(u, V0, yb), SIDING);
+      }
+      // roof: steep lower front slope, shallow upper slope, shed dormer roof to the back
+      const o = 0.3;
+      quad(at(U0 - o, V1 + 0.25, F + 2.4), at(U1 + o, V1 + 0.25, F + 2.4), at(U1 + o, V1 - 1, yk), at(U0 - o, V1 - 1, yk), ROOF2);
+      quad(at(U0 - o, V1 - 1, yk), at(U1 + o, V1 - 1, yk), at(U1 + o, VR, yr), at(U0 - o, VR, yr), ROOF);
+      quad(at(U0 - o, VR, yr), at(U1 + o, VR, yr), at(U1 + o, V0 - 0.3, yb - 0.07), at(U0 - o, V0 - 0.3, yb - 0.07), sh(ROOF, 0.94));
+      quad(at(U0 - o, V1, F + 2.4), at(U1 + o, V1, F + 2.4), at(U1 + o, V1 + 0.25, F + 2.4), at(U0 - o, V1 + 0.25, F + 2.4), TRIM); // front soffit
+      face([U0 - o, V1 + 0.26], [U1 + o, V1 + 0.26], F + 2.28, F + 2.44, TRIM); // fascia
+      face([U0 - o, V0 - 0.31], [U1 + o, V0 - 0.31], yb - 0.2, yb - 0.04, TRIM);
+      // front: two windows, blue door, two windows
+      for (const u of [11.3, 12.85, 18, 19.6]) win([u, V1], FR, N_F, F + 0.85, 0.82, 1.35);
+      door([15.5, V1], FR, N_F, F, 0.92, 2.05, BLUE); panel([15.5, V1], FR, N_F, 0.09, 0.6, F + 1.62, F + 1.88, sh(TRIM, 0.85)); // fanlight
+      box(14.5, 16.5, V1, V1 + 1.2, base, F - 0.06, CONC); box(14.6, 16.4, V1 + 1.2, V1 + 1.55, base, F - 0.24, CONC); box(14.6, 16.4, V1 + 1.55, V1 + 1.9, base, F - 0.42, CONC); // stoop + steps
+      // back: four windows upstairs, three on the main floor, basement door + window
+      for (const u of [U1 - 2.1, U1 - 5.9, U1 - 8.2, U1 - 10.2]) win([u, V0], FR, N_B, F + 3.15, 0.8, 1.25);
+      win([U1 - 2.2, V0], FR, N_B, F + 0.85, 1.7, 1.3); win([U1 - 5.9, V0], FR, N_B, F + 1.15, 0.75, 0.95); win([U1 - 9, V0], FR, N_B, F + 0.85, 0.95, 1.25);
+      if (gh(U1 - 2, V0 - 0.5) < F - 2.2) door([U1 - 2, V0], FR, N_B, F - 2.4, 0.9, 2, hx('#5b463c'));
+      if (gh(U1 - 5.2, V0 - 0.5) < F - 1.8) win([U1 - 5.2, V0], FR, N_B, F - 1.65, 0.8, 0.75);
+      // gable ends: bedroom + attic windows on the west, a window either side of the chimney on the east
+      win([U0, 6.2], SD, N_W, F + 3.0, 0.8, 1.2); win([U0, VR], SD, N_W, F + 4.85, 0.5, 0.6); door([U0, 6.3], SD, N_W, F, 0.86, 2.02, DOORW);
+      win([U1, 6.3], SD, N_E, F + 3.0, 0.8, 1.2); win([U1, 6.3], SD, N_E, F + 0.85, 0.82, 1.35);
+      box(U1, U1 + 0.55, 2.7, 4.0, base, F + 7.05, BRICK, sh(BRICK, 0.5)); box(U1 - 0.06, U1 + 0.61, 2.64, 4.06, F + 6.9, F + 7.0, sh(BRICK, 0.8)); // chimney
+
+      // ── garage (gable faces the road)
+      for (const [p, q] of [[[G0, GV1], [G1, GV1]], [[G1, GV1], [G1, GV0]], [[G1, GV0], [G0, GV0]], [[G0, GV0], [G0, GV1]]]) { face(p, q, base, Fg, CONC); face(p, q, Fg, Tg, SIDING); }
+      for (const v of [GV0, GV1]) quad(at(G0, v, Tg), at(G1, v, Tg), at(GR, v, Tg + 1.3), at(GR, v, Tg + 1.3), SIDING);
+      const gs = 1.3 / (GR - G0);
+      for (const s of [-1, 1]) quad(at(GR + s * (GR - G0 + 0.28), GV0 - 0.3, Tg - 0.28 * gs), at(GR + s * (GR - G0 + 0.28), GV1 + 0.35, Tg - 0.28 * gs), at(GR, GV1 + 0.35, Tg + 1.3), at(GR, GV0 - 0.3, Tg + 1.3), s < 0 ? ROOF2 : ROOF);
+      door([GR, GV1], FR, N_F, Fg, 2.75, 2.1, DOORW);
+      for (const y of [0.55, 1.07, 1.6]) panel([GR, GV1], FR, N_F, 0.09, 2.75, Fg + y - 0.012, Fg + y + 0.012, sh(DOORW, 0.72));
+      win([G0, 3.6], SD, N_W, Fg + 1.0, 0.8, 1.1);
+
+      // ── breezeway: slab and a low roof between the garage and the house
+      const BV0 = 2.4, BV1 = 6.9, BM = (BV0 + BV1) / 2, yB = Tg + 0.05;
+      box(G1, U0, BV0, BV1, base, Fg + 0.05, CONC);
+      quad(at(G1, BV1 + 0.3, yB - 0.1), at(U0, BV1 + 0.3, yB - 0.1), at(U0, BM, yB + 0.8), at(G1, BM, yB + 0.8), ROOF2);
+      quad(at(G1, BV0 - 0.3, yB - 0.1), at(U0, BV0 - 0.3, yB - 0.1), at(U0, BM, yB + 0.8), at(G1, BM, yB + 0.8), ROOF);
+      box(U0 - 0.2, U0 - 0.06, BV1 + 0.1, BV1 + 0.24, Fg, yB - 0.1, TRIM); // post at the front corner
+
+      // ── rear deck on its concrete base
+      const D = Fg + 0.05, DU0 = 3.4, DV0 = -3.4;
+      box(DU0, U0, DV0, GV0, base, D - 0.1, CONC, WOOD); box(G1, U0, GV0, BV0, base, D - 0.1, CONC, WOOD);
+      const rail = (p, q) => {
+        const l = Math.hypot(q[0] - p[0], q[1] - p[1]), d = [(q[0] - p[0]) / l, (q[1] - p[1]) / l], n = [-d[1], d[0]];
+        const slab = (a, b, t, y0, y1, col) => { const c = [[a[0] - n[0] * t, a[1] - n[1] * t], [b[0] - n[0] * t, b[1] - n[1] * t], [b[0] + n[0] * t, b[1] + n[1] * t], [a[0] + n[0] * t, a[1] + n[1] * t]]; for (let i = 0; i < 4; i++) face(c[i], c[(i + 1) % 4], y0, y1, col); quad(...c.map((x) => at(x[0], x[1], y1)), col); };
+        const pt = (s) => [p[0] + d[0] * s, p[1] + d[1] * s];
+        slab(p, q, 0.045, D + 0.93, D + 1.0, WOOD); slab(p, q, 0.03, D - 0.02, D + 0.07, WOOD);
+        for (let i = 0, k = Math.round(l / 1.3); i <= k; i++) slab(pt(l * i / k - 0.05), pt(l * i / k + 0.05), 0.05, D - 0.1, D + 1.0, sh(WOOD, 0.9));
+        for (let s = 0.14; s < l; s += 0.14) face(pt(s - 0.02), pt(s + 0.02), D + 0.07, D + 0.93, sh(WOOD, 0.95));
+      };
+      rail([DU0, GV0], [DU0, DV0]); rail([DU0, DV0], [U0, DV0]); rail([U0, DV0], [U0, V0 - 1.2]);
+      for (let i = 0; i < 9; i++) box(U0 + i * 0.3, U0 + (i + 1) * 0.3, V0 - 1.2, V0, base, D - 0.1 - (i + 1) * 0.19, CONC); // concrete steps down along the back wall
+    });
+  }
 }
 function updateBuildings(p) {
   let todo = null, best = 1e18;
